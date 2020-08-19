@@ -57,6 +57,7 @@ pub type FxHashSet<V> = HashSet<V, BuildHasherDefault<FxHasher>>;
 /// out-performs an FNV-based hash within rustc itself -- the collision rate is
 /// similar or slightly worse than FNV, but the speed of the hash function
 /// itself is much higher because it works on up to 8 bytes at a time.
+#[derive(Copy, Clone)]
 pub struct FxHasher {
     hash: usize,
 }
@@ -83,62 +84,27 @@ impl FxHasher {
 impl Hasher for FxHasher {
     #[inline]
     fn write(&mut self, mut bytes: &[u8]) {
-        #[cfg(target_pointer_width = "32")]
-        let read_usize = |bytes: &[u8]| u32::from_ne_bytes(bytes[..4].try_into().unwrap());
-        #[cfg(target_pointer_width = "64")]
-        let read_usize = |bytes: &[u8]| u64::from_ne_bytes(bytes[..8].try_into().unwrap());
-
-        let mut hash = FxHasher { hash: self.hash };
-        assert!(size_of::<usize>() <= 8);
+        let mut hash = *self;
+        assert!(size_of::<usize>() <= size_of::<u64>());
         while bytes.len() >= size_of::<usize>() {
-            hash.add_to_hash(read_usize(bytes) as usize);
-            bytes = &bytes[size_of::<usize>()..];
+            let (usize_bytes, rest_bytes) = bytes.split_at(size_of::<usize>());
+            hash.add_to_hash(usize::from_ne_bytes(usize_bytes.try_into().unwrap()));
+            bytes = rest_bytes;
         }
-        if (size_of::<usize>() > 4) && (bytes.len() >= 4) {
-            hash.add_to_hash(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
-            bytes = &bytes[4..];
+        if bytes.len() >= size_of::<u32>() {
+            let (u32_bytes, rest_bytes) = bytes.split_at(size_of::<u32>());
+            hash.add_to_hash(u32::from_ne_bytes(u32_bytes.try_into().unwrap()) as usize);
+            bytes = rest_bytes;
         }
-        if (size_of::<usize>() > 2) && bytes.len() >= 2 {
-            hash.add_to_hash(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
-            bytes = &bytes[2..];
+        if bytes.len() >= size_of::<u16>() {
+            let (u16_bytes, rest_bytes) = bytes.split_at(size_of::<u16>());
+            hash.add_to_hash(u16::from_ne_bytes(u16_bytes.try_into().unwrap()) as usize);
+            bytes = rest_bytes;
         }
-        if (size_of::<usize>() > 1) && bytes.len() >= 1 {
+        if bytes.len() >= size_of::<u8>() {
             hash.add_to_hash(bytes[0] as usize);
         }
-        self.hash = hash.hash;
-    }
-
-    #[inline]
-    fn write_u8(&mut self, i: u8) {
-        self.add_to_hash(i as usize);
-    }
-
-    #[inline]
-    fn write_u16(&mut self, i: u16) {
-        self.add_to_hash(i as usize);
-    }
-
-    #[inline]
-    fn write_u32(&mut self, i: u32) {
-        self.add_to_hash(i as usize);
-    }
-
-    #[cfg(target_pointer_width = "32")]
-    #[inline]
-    fn write_u64(&mut self, i: u64) {
-        self.add_to_hash(i as usize);
-        self.add_to_hash((i >> 32) as usize);
-    }
-
-    #[cfg(target_pointer_width = "64")]
-    #[inline]
-    fn write_u64(&mut self, i: u64) {
-        self.add_to_hash(i as usize);
-    }
-
-    #[inline]
-    fn write_usize(&mut self, i: usize) {
-        self.add_to_hash(i);
+        *self = hash;
     }
 
     #[inline]
